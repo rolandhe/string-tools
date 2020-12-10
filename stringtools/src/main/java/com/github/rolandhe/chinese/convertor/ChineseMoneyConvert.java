@@ -44,7 +44,7 @@ public class ChineseMoneyConverter {
     private static final String[] SEGMENTS = {"", "万", "亿", "万亿", "亿亿"};
     private static final String YUAN = "元";
     private static final String YUAN_END = "元整";
-    private static final String[] DECIMAL_UNIT = {"", "分", "角"};
+    private static final String[] DECIMAL_UNIT = {"角", "分"};
 
     /**
      * 分段长度
@@ -240,8 +240,8 @@ public class ChineseMoneyConverter {
             return null;
         }
         StringBuilder sb = new StringBuilder();
-        for (int i = decimalPart.length() - 1; i >= 0; i--) {
-            String unit = DECIMAL_UNIT[decimalPart.length() - i];
+        for (int i = 0; i < decimalPart.length(); i++) {
+            String unit = DECIMAL_UNIT[i];
             char c = decimalPart.charAt(i);
             int value = c - ZERO_CHAR;
             if (value == 0) {
