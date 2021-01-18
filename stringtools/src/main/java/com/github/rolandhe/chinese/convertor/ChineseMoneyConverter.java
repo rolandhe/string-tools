@@ -3,15 +3,24 @@ package com.github.rolandhe.chinese.convertor;
 import org.apache.commons.lang3.StringUtils;
 
 /**
- * 金额数字转换为中文大写的工具类，整数部分支持最多20位，小数部分最多支持两位。。<br>
+ * 金额数字转换为中文大写的工具类，整数部分支持最多20位，小数部分最多支持两位。<br>
  * <p>
  * 整数部分算法是通过分段实现，每一段是4位，分别对应着千级、千万、千亿、千亿亿、万亿亿，分别计算后统一消除重复的"零"。
  * </p>
+ * 遵循小学数字读取法则知识：<br>
+ * <ul>
+ *     <li>1. 四位以内的数，按照数位顺序，从最高位读起</li>
+ *     <li>2. 四位以上的数，先从右向左四位分级，然后从最高级起，依次读亿级、万级、个级。读出各级里的数和它们的级名。亿级里的数，按照个级的数的读法来读，再在后面加上一个“亿”字。万级里的数，同样按照个级的数的读法来读，再在后面加上一个“万”字；</li>
+ *     <li>3. 每级末尾不管有几个“0”，都不读，其他数位上有一个“0”或几个“0”，都只读一个零。</li>
+ * </ul>
  *
  * @author rolandhe
+ * @date 2020-12-10 14:30
  */
 public class ChineseMoneyConverter {
-
+    /**
+     * 私有构造器，防止被实例化
+     */
     private ChineseMoneyConverter() {
     }
 
@@ -29,21 +38,68 @@ public class ChineseMoneyConverter {
      */
     private static final int DECIMAL_PART_MAX_LENGTH = 2;
 
-
+    /**
+     * 0字符串
+     */
     private static final String ZERO_STR = "0";
+
+    /**
+     * 零字符
+     */
     private static final char ZERO_CHAR = '0';
+
+    /**
+     * 零字符串
+     */
     private static final char ZERO_CN_CHAR = '零';
+
+    /**
+     * 零字符
+     */
     private static final String ZERO_CN_STR = "零";
 
-    private static final String[] CHINESE_NUMBER = {ZERO_CN_STR, "壹", "貳", "叁", "肆", "伍", "陆", "柒", "捌", "玖"};
+    /**
+     * 亿级别单位
+     */
+    private static final char YI_UNIT = '亿';
+
+    /**
+     * 金额中数字对应中文
+     */
+    private static final String[] CHINESE_NUMBER = {ZERO_CN_STR, "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖"};
+
+    /**
+     * 每个分段对应的4个位，个位不需要展示
+     */
     private static final String[] UNITS = {"", "拾", "佰", "仟"};
 
     /**
-     * 20位整数最多分5段
+     * 20位整数最多分5段,元级别不需要展现
      */
     private static final String[] SEGMENTS = {"", "万", "亿", "万亿", "亿亿"};
+
+    /**
+     * 分段级别中的"亿"级别
+     */
+    public static final int SEGMENT_LEVEL_YI = 3;
+
+    /**
+     * 分段的4位都是0时,是否需要忽略，对应{@link #SEGMENTS}, 其中亿级别需要忽略
+     */
+    private static final boolean[] SEGMENTS_FULL_ZERO_IGNORE = {false, false, true, false, false};
+
+    /**
+     * 元
+     */
     private static final String YUAN = "元";
+    /**
+     * 没有小数的金额结尾
+     */
     private static final String YUAN_END = "元整";
+
+    /**
+     * 金额小数部分单位
+     */
     private static final String[] DECIMAL_UNIT = {"角", "分"};
 
     /**
@@ -52,26 +108,48 @@ public class ChineseMoneyConverter {
     private static final int SEC_LENGTH = 4;
 
     /**
+     * 小数点字符
+     */
+    private static final String DECIMAL_POINT = ".";
+
+
+    /**
+     * 金额超长异常
+     */
+    public static class ExceedException extends RuntimeException {
+        /**
+         * 异常构造器
+         *
+         * @param message 异常信息
+         */
+        public ExceedException(String message) {
+            super(message);
+        }
+    }
+
+    /**
      * 把金额字符串转换成中文
      *
-     * @param num 数字金额字符串
+     * @param amount 数字金额字符串
      * @return 转换完成的中文
+     * @throws ExceedException 可能抛出小数或者整数部分的超长异常
      */
-    public static String convert(String num) {
+    public static String convert(String amount) throws ExceedException {
         // 清除整数之前的0
-        String trimNumber = StringUtils.stripStart(num, ZERO_STR);
-        if(trimNumber.length() == 0) {
-            trimNumber = "0";
+        String trimNumber = StringUtils.stripStart(amount, ZERO_STR);
+        // 全是零时不能消除成null了
+        if (trimNumber.length() == 0) {
+            trimNumber = ZERO_STR;
         }
-        String[] parts = StringUtils.splitByWholeSeparatorPreserveAllTokens(trimNumber, ".");
+        String[] parts = StringUtils.splitByWholeSeparatorPreserveAllTokens(trimNumber, DECIMAL_POINT);
         if (parts[0].length() > INT_PART_MAX_LENGTH) {
-            throw new RuntimeException(num + " int part exceed");
+            throw new ExceedException(amount + " int part exceed");
         }
         if (parts.length == PART_COUNT) {
             // 消除小数右边的0
             parts[1] = StringUtils.stripEnd(parts[1], ZERO_STR);
             if (parts[1].length() > DECIMAL_PART_MAX_LENGTH) {
-                throw new RuntimeException(num + " decimal part exceed");
+                throw new ExceedException(amount + " decimal part exceed");
             }
         }
         String intPart = processIntPart(parts[0]);
@@ -118,16 +196,24 @@ public class ChineseMoneyConverter {
         StringBuilder context = new StringBuilder();
         int index = 0;
         for (String segment : segments) {
-            // 每段的单位
-            String unit = SEGMENTS[segments.length - 1 - index];
+            int segmentPos = segments.length - 1 - index;
+            boolean ignoreZero = SEGMENTS_FULL_ZERO_IGNORE[segmentPos];
             processSegment(segment, context);
-            sb.append(context.toString());
-            if (!onlyZero(context)) {
+            boolean fullZero = onlyZero(context);
+            if (!fullZero || !ignoreZero) {
+                sb.append(context.toString());
+            }
+            if (!fullZero) {
+                // 每段的单位
+                String unit = SEGMENTS[segmentPos];
                 sb.append(unit);
             }
             index++;
         }
         clearZeroRepeat(sb);
+        if (segments.length > SEGMENT_LEVEL_YI) {
+            normalizeUnit(sb);
+        }
         return sb.toString();
     }
 
@@ -155,9 +241,7 @@ public class ChineseMoneyConverter {
             char c = segment.charAt(i);
             int value = (c - ZERO_CHAR);
             int unitPos = segment.length() - 1 - i;
-            if (!ignoreOne(segment, unitPos, value)) {
-                context.append(CHINESE_NUMBER[value]);
-            }
+            context.append(CHINESE_NUMBER[value]);
             if (value > 0) {
                 String unit = UNITS[unitPos];
                 context.append(unit);
@@ -166,24 +250,6 @@ public class ChineseMoneyConverter {
         clearZeroRepeat(context);
     }
 
-    /**
-     * 比如：100000直接输出是壹拾万，而拾万是更合理的，本方法是判断是否要忽略这个壹
-     *
-     * @param segment 分段字符串
-     * @param unitPos 当前是在10位上还是个位上
-     * @param value   当前位对应的值
-     * @return 是否忽略壹
-     */
-    private static boolean ignoreOne(String segment, int unitPos, int value) {
-        if (value != 1 || unitPos != 1) {
-            return false;
-        }
-        // 如果当前端仅仅有2位时，符合丢调用"壹"的规则
-        if (segment.length() == 2) {
-            return true;
-        }
-        return false;
-    }
 
     /**
      * 消除重复的"零"
@@ -208,6 +274,29 @@ public class ChineseMoneyConverter {
         }
         if (context.length() > 1 && context.charAt(context.length() - 1) == ZERO_CN_CHAR) {
             context.deleteCharAt(context.length() - 1);
+        }
+    }
+
+    /**
+     * "万亿"、"亿亿"级别时，当还存在"亿"级别段，需要把"万亿"、"亿亿"后面的亿消除掉
+     *
+     * @param sb 转换金额上下文
+     */
+    private static void normalizeUnit(StringBuilder sb) {
+        boolean metYi = false;
+        for (int i = sb.length() - 1; i >= 0; i--) {
+            char c = sb.charAt(i);
+            if (c != YI_UNIT) {
+                continue;
+            }
+            if (!metYi) {
+                metYi = true;
+                continue;
+            }
+            sb.deleteCharAt(i);
+            if (i > 0 && sb.charAt(i - 1) == YI_UNIT) {
+                i--;
+            }
         }
     }
 
@@ -244,6 +333,7 @@ public class ChineseMoneyConverter {
             String unit = DECIMAL_UNIT[i];
             char c = decimalPart.charAt(i);
             int value = c - ZERO_CHAR;
+            // 零分、零角都不需要展示
             if (value == 0) {
                 continue;
             }
